@@ -1,0 +1,777 @@
+.include "m2560def.inc"
+
+.def row = r16 					; current row number and the x of accident
+.def col = r17 					; current column number and the y of accident
+
+.def rmask = r18 				; mask for current row during scan
+.def cmask = r19 				; mask for current column during scan
+.def temp1 = r20
+.def temp2 = r21
+.def first_num = r22
+.def second_num = r24
+.def result = r25
+.def temp = r23
+.def iH = r29
+.def iL = r28
+.def sqrt = r7
+.equ loop_count = 10000			; initial the loop data
+
+.equ PORTFDIR = 0xF0 			; PF7-4: output, PF3-0, input
+.equ INITCOLMASK = 0xEF 		; scan from the leftmost column,
+.equ INITROWMASK = 0x01 		; scan from the top row
+.equ ROWMASK =0x0F 				; for obtaining input from Port F
+
+.equ LCD_CTRL_PORT = PORTA
+.equ LCD_CTRL_DDR = DDRA
+.equ LCD_RS = 7
+.equ LCD_E = 6
+.equ LCD_RW = 5
+.equ LCD_BE = 4
+.equ LCD_DATA_PORT = PORTF
+.equ LCD_DATA_DDR = DDRF
+.equ LCD_DATA_PIN = PINF
+.equ F_CPU = 16000000				; 16M
+.equ DELAY_1MS = F_CPU / 4 / 1000 - 4
+; 4 cycles per iteration - setup/call-return overhead
+
+.cseg
+jmp  flash
+flash_patterns:						; use these flash_patterns to flash for 3 times
+	.db 0xFF, 0x00, 0xFF, 0x00, 0xFF, 0x00	
+
+heights:						; map
+	.db 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10		,10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10		,10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10		,10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10
+	.db 10, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 10		,10, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 10		,10, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 10		,10, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 10
+	.db 10, 14, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 14, 10		,10, 14, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 14, 10		,10, 14, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 14, 10		,10, 14, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 14, 10
+	.db 10, 14, 18, 22, 22, 22, 22, 22, 22, 22, 22, 22, 22, 18, 14, 10		,10, 14, 18, 22, 22, 22, 22, 22, 22, 22, 22, 22, 22, 18, 14, 10		,10, 14, 18, 22, 22, 22, 22, 22, 22, 22, 22, 22, 22, 18, 14, 10		,10, 14, 18, 22, 22, 22, 22, 22, 22, 22, 22, 22, 22, 18, 14, 10
+	.db 10, 14, 18, 22, 26, 26, 26, 26, 26, 26, 26, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 26, 26, 26, 26, 26, 26, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 26, 26, 26, 26, 26, 26, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 26, 26, 26, 26, 26, 26, 26, 22, 18, 14, 10
+	.db 10, 14, 18, 22, 26, 30, 30, 30, 30, 30, 30, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 30, 30, 30, 30, 30, 30, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 30, 30, 30, 30, 30, 30, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 30, 30, 30, 30, 30, 30, 26, 22, 18, 14, 10
+	.db 10, 14, 18, 22, 26, 30, 34, 34, 34, 34, 30, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 30, 34, 34, 34, 34, 30, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 30, 34, 34, 34, 34, 30, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 30, 34, 34, 34, 34, 30, 26, 22, 18, 14, 10
+	.db 10, 14, 18, 22, 26, 30, 34, 38, 38, 34, 30, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 30, 34, 38, 38, 34, 30, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 30, 34, 38, 38, 34, 30, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 30, 34, 38, 38, 34, 30, 26, 22, 18, 14, 10
+	.db 10, 14, 18, 22, 26, 30, 34, 38, 38, 34, 30, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 30, 34, 38, 38, 34, 30, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 30, 34, 38, 38, 34, 30, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 30, 34, 38, 38, 34, 30, 26, 22, 18, 14, 10
+	.db 10, 14, 18, 22, 26, 30, 34, 34, 34, 34, 30, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 30, 34, 34, 34, 34, 30, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 30, 34, 34, 34, 34, 30, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 30, 34, 34, 34, 34, 30, 26, 22, 18, 14, 10
+	.db 10, 14, 18, 22, 26, 30, 30, 30, 30, 30, 30, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 30, 30, 30, 30, 30, 30, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 30, 30, 30, 30, 30, 30, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 30, 30, 30, 30, 30, 30, 26, 22, 18, 14, 10
+	.db 10, 14, 18, 22, 26, 26, 26, 26, 26, 26, 26, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 26, 26, 26, 26, 26, 26, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 26, 26, 26, 26, 26, 26, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 26, 26, 26, 26, 26, 26, 26, 22, 18, 14, 10
+	.db 10, 14, 18, 22, 22, 22, 22, 22, 22, 22, 22, 22, 22, 18, 14, 10		,10, 14, 18, 22, 22, 22, 22, 22, 22, 22, 22, 22, 22, 18, 14, 10		,10, 14, 18, 22, 22, 22, 22, 22, 22, 22, 22, 22, 22, 18, 14, 10		,10, 14, 18, 22, 22, 22, 22, 22, 22, 22, 22, 22, 22, 18, 14, 10
+	.db 10, 14, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 14, 10		,10, 14, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 14, 10		,10, 14, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 14, 10		,10, 14, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 14, 10
+	.db 10, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 10		,10, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 10		,10, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 10		,10, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 10
+	.db 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10		,10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10		,10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10		,10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10
+
+
+	.db 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10		,10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10		,10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10		,10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10
+	.db 10, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 10		,10, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 10		,10, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 10		,10, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 10
+	.db 10, 14, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 14, 10		,10, 14, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 14, 10		,10, 14, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 14, 10		,10, 14, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 14, 10
+	.db 10, 14, 18, 22, 22, 22, 22, 22, 22, 22, 22, 22, 22, 18, 14, 10		,10, 14, 18, 22, 22, 22, 22, 22, 22, 22, 22, 22, 22, 18, 14, 10		,10, 14, 18, 22, 22, 22, 22, 22, 22, 22, 22, 22, 22, 18, 14, 10		,10, 14, 18, 22, 22, 22, 22, 22, 22, 22, 22, 22, 22, 18, 14, 10
+	.db 10, 14, 18, 22, 26, 26, 26, 26, 26, 26, 26, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 26, 26, 26, 26, 26, 26, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 26, 26, 26, 26, 26, 26, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 26, 26, 26, 26, 26, 26, 26, 22, 18, 14, 10
+	.db 10, 14, 18, 22, 26, 30, 30, 30, 30, 30, 30, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 30, 30, 30, 30, 30, 30, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 30, 30, 30, 30, 30, 30, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 30, 30, 30, 30, 30, 30, 26, 22, 18, 14, 10
+	.db 10, 14, 18, 22, 26, 30, 34, 34, 34, 34, 30, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 30, 34, 34, 34, 34, 30, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 30, 34, 34, 34, 34, 30, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 30, 34, 34, 34, 34, 30, 26, 22, 18, 14, 10
+	.db 10, 14, 18, 22, 26, 30, 34, 38, 38, 34, 30, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 30, 34, 38, 38, 34, 30, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 30, 34, 38, 38, 34, 30, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 30, 34, 38, 38, 34, 30, 26, 22, 18, 14, 10
+	.db 10, 14, 18, 22, 26, 30, 34, 38, 38, 34, 30, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 30, 34, 38, 38, 34, 30, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 30, 34, 38, 38, 34, 30, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 30, 34, 38, 38, 34, 30, 26, 22, 18, 14, 10
+	.db 10, 14, 18, 22, 26, 30, 34, 34, 34, 34, 30, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 30, 34, 34, 34, 34, 30, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 30, 34, 34, 34, 34, 30, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 30, 34, 34, 34, 34, 30, 26, 22, 18, 14, 10
+	.db 10, 14, 18, 22, 26, 30, 30, 30, 30, 30, 30, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 30, 30, 30, 30, 30, 30, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 30, 30, 30, 30, 30, 30, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 30, 30, 30, 30, 30, 30, 26, 22, 18, 14, 10
+	.db 10, 14, 18, 22, 26, 26, 26, 26, 26, 26, 26, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 26, 26, 26, 26, 26, 26, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 26, 26, 26, 26, 26, 26, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 26, 26, 26, 26, 26, 26, 26, 22, 18, 14, 10
+	.db 10, 14, 18, 22, 22, 22, 22, 22, 22, 22, 22, 22, 22, 18, 14, 10		,10, 14, 18, 22, 22, 22, 22, 22, 22, 22, 22, 22, 22, 18, 14, 10		,10, 14, 18, 22, 22, 22, 22, 22, 22, 22, 22, 22, 22, 18, 14, 10		,10, 14, 18, 22, 22, 22, 22, 22, 22, 22, 22, 22, 22, 18, 14, 10
+	.db 10, 14, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 14, 10		,10, 14, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 14, 10		,10, 14, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 14, 10		,10, 14, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 14, 10
+	.db 10, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 10		,10, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 10		,10, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 10		,10, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 10
+	.db 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10		,10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10		,10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10		,10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10
+
+
+	.db 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10		,10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10		,10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10		,10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10
+	.db 10, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 10		,10, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 10		,10, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 10		,10, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 10
+	.db 10, 14, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 14, 10		,10, 14, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 14, 10		,10, 14, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 14, 10		,10, 14, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 14, 10
+	.db 10, 14, 18, 22, 22, 22, 22, 22, 22, 22, 22, 22, 22, 18, 14, 10		,10, 14, 18, 22, 22, 22, 22, 22, 22, 22, 22, 22, 22, 18, 14, 10		,10, 14, 18, 22, 22, 22, 22, 22, 22, 22, 22, 22, 22, 18, 14, 10		,10, 14, 18, 22, 22, 22, 22, 22, 22, 22, 22, 22, 22, 18, 14, 10
+	.db 10, 14, 18, 22, 26, 26, 26, 26, 26, 26, 26, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 26, 26, 26, 26, 26, 26, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 26, 26, 26, 26, 26, 26, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 26, 26, 26, 26, 26, 26, 26, 22, 18, 14, 10
+	.db 10, 14, 18, 22, 26, 30, 30, 30, 30, 30, 30, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 30, 30, 30, 30, 30, 30, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 30, 30, 30, 30, 30, 30, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 30, 30, 30, 30, 30, 30, 26, 22, 18, 14, 10
+	.db 10, 14, 18, 22, 26, 30, 34, 34, 34, 34, 30, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 30, 34, 34, 34, 34, 30, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 30, 34, 34, 34, 34, 30, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 30, 34, 34, 34, 34, 30, 26, 22, 18, 14, 10
+	.db 10, 14, 18, 22, 26, 30, 34, 38, 38, 34, 30, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 30, 34, 38, 38, 34, 30, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 30, 34, 38, 38, 34, 30, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 30, 34, 38, 38, 34, 30, 26, 22, 18, 14, 10
+	.db 10, 14, 18, 22, 26, 30, 34, 38, 38, 34, 30, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 30, 34, 38, 38, 34, 30, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 30, 34, 38, 38, 34, 30, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 30, 34, 38, 38, 34, 30, 26, 22, 18, 14, 10
+	.db 10, 14, 18, 22, 26, 30, 34, 34, 34, 34, 30, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 30, 34, 34, 34, 34, 30, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 30, 34, 34, 34, 34, 30, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 30, 34, 34, 34, 34, 30, 26, 22, 18, 14, 10
+	.db 10, 14, 18, 22, 26, 30, 30, 30, 30, 30, 30, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 30, 30, 30, 30, 30, 30, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 30, 30, 30, 30, 30, 30, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 30, 30, 30, 30, 30, 30, 26, 22, 18, 14, 10
+	.db 10, 14, 18, 22, 26, 26, 26, 26, 26, 26, 26, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 26, 26, 26, 26, 26, 26, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 26, 26, 26, 26, 26, 26, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 26, 26, 26, 26, 26, 26, 26, 22, 18, 14, 10
+	.db 10, 14, 18, 22, 22, 22, 22, 22, 22, 22, 22, 22, 22, 18, 14, 10		,10, 14, 18, 22, 22, 22, 22, 22, 22, 22, 22, 22, 22, 18, 14, 10		,10, 14, 18, 22, 22, 22, 22, 22, 22, 22, 22, 22, 22, 18, 14, 10		,10, 14, 18, 22, 22, 22, 22, 22, 22, 22, 22, 22, 22, 18, 14, 10
+	.db 10, 14, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 14, 10		,10, 14, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 14, 10		,10, 14, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 14, 10		,10, 14, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 14, 10
+	.db 10, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 10		,10, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 10		,10, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 10		,10, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 10
+	.db 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10		,10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10		,10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10		,10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10
+
+
+	.db 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10		,10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10		,10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10		,10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10
+	.db 10, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 10		,10, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 10		,10, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 10		,10, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 10
+	.db 10, 14, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 14, 10		,10, 14, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 14, 10		,10, 14, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 14, 10		,10, 14, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 14, 10
+	.db 10, 14, 18, 22, 22, 22, 22, 22, 22, 22, 22, 22, 22, 18, 14, 10		,10, 14, 18, 22, 22, 22, 22, 22, 22, 22, 22, 22, 22, 18, 14, 10		,10, 14, 18, 22, 22, 22, 22, 22, 22, 22, 22, 22, 22, 18, 14, 10		,10, 14, 18, 22, 22, 22, 22, 22, 22, 22, 22, 22, 22, 18, 14, 10
+	.db 10, 14, 18, 22, 26, 26, 26, 26, 26, 26, 26, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 26, 26, 26, 26, 26, 26, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 26, 26, 26, 26, 26, 26, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 26, 26, 26, 26, 26, 26, 26, 22, 18, 14, 10
+	.db 10, 14, 18, 22, 26, 30, 30, 30, 30, 30, 30, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 30, 30, 30, 30, 30, 30, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 30, 30, 30, 30, 30, 30, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 30, 30, 30, 30, 30, 30, 26, 22, 18, 14, 10
+	.db 10, 14, 18, 22, 26, 30, 34, 34, 34, 34, 30, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 30, 34, 34, 34, 34, 30, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 30, 34, 34, 34, 34, 30, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 30, 34, 34, 34, 34, 30, 26, 22, 18, 14, 10
+	.db 10, 14, 18, 22, 26, 30, 34, 38, 38, 34, 30, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 30, 34, 38, 38, 34, 30, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 30, 34, 38, 38, 34, 30, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 30, 34, 38, 38, 34, 30, 26, 22, 18, 14, 10
+	.db 10, 14, 18, 22, 26, 30, 34, 38, 38, 34, 30, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 30, 34, 38, 38, 34, 30, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 30, 34, 38, 38, 34, 30, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 30, 34, 38, 38, 34, 30, 26, 22, 18, 14, 10
+	.db 10, 14, 18, 22, 26, 30, 34, 34, 34, 34, 30, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 30, 34, 34, 34, 34, 30, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 30, 34, 34, 34, 34, 30, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 30, 34, 34, 34, 34, 30, 26, 22, 18, 14, 10
+	.db 10, 14, 18, 22, 26, 30, 30, 30, 30, 30, 30, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 30, 30, 30, 30, 30, 30, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 30, 30, 30, 30, 30, 30, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 30, 30, 30, 30, 30, 30, 26, 22, 18, 14, 10
+	.db 10, 14, 18, 22, 26, 26, 26, 26, 26, 26, 26, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 26, 26, 26, 26, 26, 26, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 26, 26, 26, 26, 26, 26, 26, 22, 18, 14, 10		,10, 14, 18, 22, 26, 26, 26, 26, 26, 26, 26, 26, 22, 18, 14, 10
+	.db 10, 14, 18, 22, 22, 22, 22, 22, 22, 22, 22, 22, 22, 18, 14, 10		,10, 14, 18, 22, 22, 22, 22, 22, 22, 22, 22, 22, 22, 18, 14, 10		,10, 14, 18, 22, 22, 22, 22, 22, 22, 22, 22, 22, 22, 18, 14, 10		,10, 14, 18, 22, 22, 22, 22, 22, 22, 22, 22, 22, 22, 18, 14, 10
+	.db 10, 14, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 14, 10		,10, 14, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 14, 10		,10, 14, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 14, 10		,10, 14, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 14, 10
+	.db 10, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 10		,10, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 10		,10, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 10		,10, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 10
+	.db 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10		,10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10		,10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10		,10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10
+	
+search_points:					; 256 points that drone needs to search
+	.db 2, 2, 14, 2, 6, 14, 2, 10, 14, 2, 14, 14, 2, 18, 14, 2, 22, 14, 2, 26, 14, 2, 30, 14, 2, 34, 14, 2, 38, 14, 2, 42, 14, 2, 46, 14, 2, 50, 14, 2, 54, 14, 2, 58, 14, 2, 62, 14
+	.db 6, 2, 14, 6, 6, 30, 6, 10, 30, 6, 14, 18, 6, 18, 14, 6, 22, 30, 6, 26, 30, 6, 30, 18, 6, 34, 14, 6, 38, 30, 6, 42, 30, 6, 46, 18, 6, 50, 14, 6, 54, 30, 6, 58, 30, 6, 62, 18
+	.db 10, 2, 14, 10, 6, 30, 10, 10, 34, 10, 14, 18, 10, 18, 14, 10, 22, 30, 10, 26, 34, 10, 30, 18, 10, 34, 14, 10, 38, 30, 10, 42, 34, 10, 46, 18, 10, 50, 14, 10, 54, 30, 10, 58, 34, 10, 62, 18
+	.db 14, 2, 14, 14, 6, 18, 14, 10, 18, 14, 14, 18, 14, 18, 14, 14, 22, 18, 14, 26, 18, 14, 30, 18, 14, 34, 14, 14, 38, 18, 14, 42, 18, 14, 46, 18, 14, 50, 14, 14, 54, 18, 14, 58, 18, 14, 62, 18
+	.db 18, 2, 14, 18, 6, 14, 18, 10, 14, 18, 14, 14, 18, 18, 14, 18, 22, 14, 18, 26, 14, 18, 30, 14, 18, 34, 14, 18, 38, 14, 18, 42, 14, 18, 46, 14, 18, 50, 14, 18, 54, 14, 18, 58, 14, 18, 62, 14
+	.db 22, 2, 14, 22, 6, 30, 22, 10, 30, 22, 14, 18, 22, 18, 14, 22, 22, 30, 22, 26, 30, 22, 30, 18, 22, 34, 14, 22, 38, 30, 22, 42, 30, 22, 46, 18, 22, 50, 14, 22, 54, 30, 22, 58, 30, 22, 62, 18
+	.db 26, 2, 14, 26, 6, 30, 26, 10, 34, 26, 14, 18, 26, 18, 14, 26, 22, 30, 26, 26, 34, 26, 30, 18, 26, 34, 14, 26, 38, 30, 26, 42, 34, 26, 46, 18, 26, 50, 14, 26, 54, 30, 26, 58, 34, 26, 62, 18
+	.db 30, 2, 14, 30, 6, 18, 30, 10, 18, 30, 14, 18, 30, 18, 14, 30, 22, 18, 30, 26, 18, 30, 30, 18, 30, 34, 14, 30, 38, 18, 30, 42, 18, 30, 46, 18, 30, 50, 14, 30, 54, 18, 30, 58, 18, 30, 62, 18
+	.db 34, 2, 14, 34, 6, 14, 34, 10, 14, 34, 14, 14, 34, 18, 14, 34, 22, 14, 34, 26, 14, 34, 30, 14, 34, 34, 14, 34, 38, 14, 34, 42, 14, 34, 46, 14, 34, 50, 14, 34, 54, 14, 34, 58, 14, 34, 62, 14
+	.db 38, 2, 14, 38, 6, 30, 38, 10, 30, 38, 14, 18, 38, 18, 14, 38, 22, 30, 38, 26, 30, 38, 30, 18, 38, 34, 14, 38, 38, 30, 38, 42, 30, 38, 46, 18, 38, 50, 14, 38, 54, 30, 38, 58, 30, 38, 62, 18
+	.db 42, 2, 14, 42, 6, 30, 42, 10, 34, 42, 14, 18, 42, 18, 14, 42, 22, 30, 42, 26, 34, 42, 30, 18, 42, 34, 14, 42, 38, 30, 42, 42, 34, 42, 46, 18, 42, 50, 14, 42, 54, 30, 42, 58, 34, 42, 62, 18
+	.db 46, 2, 14, 46, 6, 18, 46, 10, 18, 46, 14, 18, 46, 18, 14, 46, 22, 18, 46, 26, 18, 46, 30, 18, 46, 34, 14, 46, 38, 18, 46, 42, 18, 46, 46, 18, 46, 50, 14, 46, 54, 18, 46, 58, 18, 46, 62, 18
+	.db 50, 2, 14, 50, 6, 14, 50, 10, 14, 50, 14, 14, 50, 18, 14, 50, 22, 14, 50, 26, 14, 50, 30, 14, 50, 34, 14, 50, 38, 14, 50, 42, 14, 50, 46, 14, 50, 50, 14, 50, 54, 14, 50, 58, 14, 50, 62, 14
+	.db 54, 2, 14, 54, 6, 30, 54, 10, 30, 54, 14, 18, 54, 18, 14, 54, 22, 30, 54, 26, 30, 54, 30, 18, 54, 34, 14, 54, 38, 30, 54, 42, 30, 54, 46, 18, 54, 50, 14, 54, 54, 30, 54, 58, 30, 54, 62, 18
+	.db 58, 2, 14, 58, 6, 30, 58, 10, 34, 58, 14, 18, 58, 18, 14, 58, 22, 30, 58, 26, 34, 58, 30, 18, 58, 34, 14, 58, 38, 30, 58, 42, 34, 58, 46, 18, 58, 50, 14, 58, 54, 30, 58, 58, 34, 58, 62, 18
+	.db 62, 2, 14, 62, 6, 18, 62, 10, 18, 62, 14, 18, 62, 18, 14, 62, 22, 18, 62, 26, 18, 62, 30, 18, 62, 34, 14, 62, 38, 18, 62, 42, 18, 62, 46, 18, 62, 50, 14, 62, 54, 18, 62, 58, 18, 62, 62, 18
+
+.macro STORE
+.if @0 > 63					
+sts @0, @1					; store direct to data space
+.else
+out @0, @1					; store register to I/O location
+.endif
+.endmacro
+
+.macro LOAD
+.if @1 > 63
+lds @0, @1					; load direct from data space
+.else
+in @0, @1					; load an I/O location to register
+.endif
+.endmacro
+
+.macro lcd_set					; set bit @0 in PORTA
+	sbi LCD_CTRL_PORT, @0		
+.endmacro
+
+.macro lcd_clr					; clear bit @0 in PORTA
+	cbi LCD_CTRL_PORT, @0		
+.endmacro
+
+.macro load_the_patterns		; load from the program memory
+	lpm temp1, Z+
+.endmacro
+
+.macro do_lcd_command
+	ldi temp, @0
+	rcall lcd_command
+	rcall lcd_wait
+.endmacro
+
+.macro do_lcd_data
+	ldi temp, @0
+	rcall lcd_data
+	rcall lcd_wait
+.endmacro
+
+.macro do_lcd_rdata			; display digits 
+	mov temp, @0
+	subi temp, -'0'
+	rcall lcd_data
+	rcall lcd_wait
+.endmacro
+
+.macro do_lcd_digits		; used to show a given number(eg: 5, 12, 56)
+	clr r27
+	clr r22
+	mov temp, @0				
+	rcall digits_stack		
+.endmacro
+
+.macro quarterSecondDelay		; delay LED for 1/4 second(as loop times are so big, we need 2 loops to do it)
+	ldi r22, low(loop_count)	; 1 cycle
+	ldi r23, high(loop_count)
+	clr iH						; 1
+	clr iL
+	clr r26
+loop1:							; loop1 loops for 9999 times(each time takes 8 clock cycles)
+	cp iL, r22					; 1
+	cpc iH, r23
+	brsh loop2					; 1, 2(if branch)
+	adiw iH:iL, 1				; 2
+	nop							; 1
+	rjmp loop1					; 2
+loop2:							; loop2 loops for 50 times(each time takes 7 clock cycles)
+	cpi r26, 0x32				; 1
+	brsh done					; 1, 2(if branch)
+	inc r26						; 1
+	clr iH
+	clr iL
+	rjmp loop1					; total clock cycles = 5+(8*9999+4+7)*49+3 = 4M
+done:
+.endmacro
+
+	ldi r19, 0xff
+	out DDRE, r19
+	ldi r19, (1 << CS30)  
+	sts TCCR3B, r19  
+	ldi r19, (1<< WGM30)|(1<<COM3B1)  
+	sts TCCR3A, r19 
+
+flash:				; at the beginning, flash for 3 times
+	ldi ZH, high(flash_patterns << 1)
+	ldi ZL, low(flash_patterns << 1)
+	ser temp1					; set port C for output
+	out DDRC, temp1				 
+	load_the_patterns
+	out PORTC, temp1			; write the numbers on LED
+	quarterSecondDelay			; delay for 1/4s
+	
+	load_the_patterns
+	out PORTC, temp1
+	quarterSecondDelay
+
+	load_the_patterns
+	out PORTC, temp1
+	quarterSecondDelay
+
+	load_the_patterns
+	out PORTC, temp1
+	quarterSecondDelay
+
+	load_the_patterns
+	out PORTC, temp1
+	quarterSecondDelay
+
+	load_the_patterns
+	out PORTC, temp1
+	
+	ldi temp, 0xff
+	out DDRE, temp
+
+	jmp RESET
+
+lcd_command:
+	STORE LCD_DATA_PORT, temp	; store temp to PORTF
+	rcall sleep_1ms
+	lcd_set LCD_E				; set bit 6 in PORTA
+	rcall sleep_1ms
+	lcd_clr LCD_E				; clear bit 6 in PORTA
+	rcall sleep_1ms				
+	ret
+
+lcd_data:
+	STORE LCD_DATA_PORT, temp	; store r16 to PORTF
+	lcd_set LCD_RS				; set bit 7 in PORTA
+	rcall sleep_1ms
+	lcd_set LCD_E				; set bit 6 in PORTA
+	rcall sleep_1ms
+	lcd_clr LCD_E				; clear bit 6 in PORTA
+	rcall sleep_1ms
+	lcd_clr LCD_RS				; clear bit 7 in PORTA
+	ret
+
+lcd_wait:
+	push temp
+	clr temp						; clear r16
+	STORE LCD_DATA_DDR, temp		; clear DDRF
+	STORE LCD_DATA_PORT, temp		; clear PORTF
+	lcd_set LCD_RW					; set bit 5 in PORTA
+lcd_wait_loop:
+	rcall sleep_1ms
+	lcd_set LCD_E					; set bit 6 in PORTA
+	rcall sleep_1ms
+	LOAD temp, LCD_DATA_PIN			; load PINF to r16
+	lcd_clr LCD_E					; clear bit 6 in PORTA
+	sbrc temp, 7					; skip if bit 7 in r16 cleared
+	rjmp lcd_wait_loop
+	lcd_clr LCD_RW					; clear bit 5 in PORTA
+	ser temp						; set r16
+	STORE LCD_DATA_DDR, temp		; set DDRF
+	pop temp
+	ret
+
+sleep_1ms:
+	push r29
+	push r28
+	ldi r29, high(DELAY_1MS)
+	ldi r28, low(DELAY_1MS)
+delayloop_1ms:
+	sbiw r29:r28, 1
+	brne delayloop_1ms
+	pop r29
+	pop r28
+	ret
+
+sleep_5ms:
+	rcall sleep_1ms
+	rcall sleep_1ms
+	rcall sleep_1ms
+	rcall sleep_1ms
+	rcall sleep_1ms
+	ret
+	
+RESET:
+	ldi r27, 0				; initialization				
+	clr first_num			; as we need to scan 2 inputs, we need to clear both nums
+	clr second_num
+	ldi temp1, PORTFDIR		; PF7:4/PF3:0, out/in
+	sts DDRL, temp1
+	ser temp1 				; PORTC is output
+	out DDRC, temp1
+
+	ldi temp, high(RAMEND)		 ; Initialize stack pointer
+    out SPH, temp
+    ldi temp, low(RAMEND)
+    out SPL, temp
+    ser temp
+    out DDRC, temp 				 ; set Port C as output
+	sei							 ; set global interrupt flag
+
+	; LCD setup
+	ser temp
+	out DDRF, temp
+	out DDRA, temp
+	clr temp
+	out PORTF, temp
+	out PORTA, temp
+
+	; LCD: init the settings
+	do_lcd_command 0b00111000	 	; 2x5x7
+	rcall sleep_5ms
+	do_lcd_command 0b00111000 		; 2x5x7
+	rcall sleep_1ms
+	do_lcd_command 0b00111000 		; 2x5x7
+	do_lcd_command 0b00111000 		; 2x5x7
+	do_lcd_command 0b00001000 		; display off
+	do_lcd_command 0b00000001 		; clear display
+	do_lcd_command 0b00000110 		; increment, no display shift
+	do_lcd_command 0b00001110 		; Cursor on, bar, no blink
+
+	do_lcd_data 's';
+	do_lcd_data 't';
+	do_lcd_data 'a';
+	do_lcd_data 't';
+	do_lcd_data 'u';
+	do_lcd_data 's';
+	do_lcd_data ' ';
+
+	do_lcd_command 0b11000000	; display on the second line
+
+	do_lcd_data 'l';
+	do_lcd_data 'o';
+	do_lcd_data 'c';
+	do_lcd_data 'a';
+	do_lcd_data 't';
+	do_lcd_data 'i';
+	do_lcd_data 'o';
+	do_lcd_data 'n';
+	do_lcd_data ' ';
+	
+inital_result:
+	ldi result, 'F'			
+	
+main:
+	ldi cmask, INITCOLMASK  ; initial column mask
+	clr r31 				; initial column
+	
+colloop:
+	cpi r31, 4				; compare with the last more column place
+	breq inital_result 		; if all keys are scanned, repeat.
+	sts PORTL, cmask 		; otherwise, scan a column
+	ldi temp1, 0xFF 		; slow down the scan operation.
+	
+delay:
+	dec temp1				; decrement
+	brne delay
+	lds temp1, PINL 		; read
+	andi temp1, ROWMASK 	; clear upper nibble of temp1, get the keypad output value
+	cpi temp1, 0xF 			; check if any row is low
+	breq nextcol
+							; if yes, find which row is low
+	ldi rmask, INITROWMASK  ; initialize for row check
+	clr r30 
+	
+rowloop:
+	cpi r30, 4				; compare with the last more row place
+	breq nextcol 			; the row scan is over.
+	mov temp2, temp1
+	and temp2, rmask		; check un-masked bit
+	breq convert 			; if bit is clear, the key is pressed
+	inc r30 				; else move to the next row
+	lsl rmask				; multiply rmask by 2
+	jmp rowloop
+	
+nextcol: 					; if row scan is over,check another column
+	lsl cmask				; multiply cmask by 2
+	inc r31					; increase column value
+	jmp colloop 			; go to the next column
+	
+convert:
+	cpi r31, 3 				; If the pressed key is in col.3
+	breq letters 			; we have a letter(A,B,C,D)
+							; If the key is not in col.3
+	cpi r30, 3 				; and if the key is in row3,
+	breq symbols 			; we have a symbol(* or #) or 0
+	mov temp1, r30 			; Otherwise we have a number in 1-9
+	lsl temp1				; muliply by 2
+	add temp1, r30 			; temp1 = row*3
+	add temp1, r31 			; temp1 = row*3 + col
+	inc temp1				; temp1 = row*3 + col + 1
+	jmp convert_end
+	
+letters:
+	ldi temp1, 'A'
+	add temp1, r30 			; Get the ASCII value for the key
+	jmp over_flow_flash		; got incorrect input, flash for error
+
+symbols:
+	cpi r31, 0 				; Check if we have a star
+	ldi temp1, '*'			; set temp1 = '*'
+	breq read_second_number	; if we have a star, means we have got the x, then read the second number as y
+	cpi r31, 1 				; or if we have zero
+	ldi temp1, 0			; set temp1 = '0' or 0
+	breq convert_end		; if not, we have hash(#)
+	ldi temp1, '#'			; set temp1 = '#'
+	jmp accident_location		;as we have got the two numbers and '*' and '#', we need to store (x, y) of the accident point.
+
+convert_end:
+	cp result, temp1		; if the input does not change, do nothing and return to first step
+	breq main
+	mov result, temp1 		; use result as a flag, judge if input changed
+	ldi temp, 10
+	mul second_num, temp
+	clr r31
+	cp r1,r31
+	brne over_flow_flash_mid	; if r1 != 0, then means there is a overflow
+	mov second_num, r0
+	add second_num, temp1 	; new first number is old one * 10 + temp1
+	jmp main
+
+read_second_number:
+	cp result, temp1		; if the input does not change, do nothing and return to first step
+	breq convert_end 		; jmp to main through convert_end, because relative branch out of reach
+	mov first_num, second_num
+	clr second_num
+	mov result, temp1
+	jmp main
+
+accident_location:	
+	cp result, temp1		; if the input does not change, do nothing and return to first step
+	breq convert_end
+	mov result, temp1
+	mov row, first_num		; the x of accident
+	mov col, second_num		; the y of accident
+	out PORTC, row
+	quarterSecondDelay
+	out PORTC, col
+	quarterSecondDelay
+	clr temp1
+	out PORTC, temp1
+	rjmp accident_location_1
+							
+over_flow_flash_mid:		; mid
+	rjmp over_flow_flash
+	
+accident_location_1:	
+	ldi ZH, high(heights << 1)
+	ldi ZL, low(heights << 1)
+	ldi temp, 64
+	mul r16, temp			; r1:r0 = 64 * x
+	clr temp
+	add r0, r17				; 64 * x + y
+	adc r1, temp			; temp used to act as the high byte(actually 0)
+	add ZL, r0				; get the location from the program memory
+	adc ZH, r1
+	lpm r8, Z				; store accident Z value to r8
+	rjmp calculate_start
+end:
+	rjmp end
+
+over_flow_flash:	
+	inc r27
+	ser temp					; set all bit to 1
+	out PORTC, temp				; all ones
+	quarterSecondDelay 
+	clr temp					; set all bit to 0
+	out PORTC, temp				; all zeros
+	quarterSecondDelay 
+	cpi r27, 3					; repeat for 3 times
+	brne over_flow_flash
+	clr r27
+	jmp RESET
+
+digits_stack:
+	clr r22						
+	push r27					
+	clr r27
+	check:
+		ldi r24, 10
+		cp temp, r24			; is the number still >= 10? 
+		brsh tensDigit			; if YES - increase tens digit
+		cpi r27, 0				; is tens digit = 0?
+		brne pushTensDigit		; if digit != 0 push it to the stack			
+	OnesDigit:					; ones digit
+		clr r27					
+		mov r27, temp			
+		push r27				
+		inc r22
+	cpi r22, 2
+	breq displayTwoDigits
+	cpi r22, 1
+	breq displayOneDigit
+	display_end:
+		pop r27
+	ret
+
+tensDigit:					; tens digit
+	inc r27					; if YES increase the digit count
+	subi temp, 10			; and subtract a 10 from the number
+	rjmp check				
+
+pushTensDigit:
+	push r27
+	inc r22
+	rjmp OnesDigit
+
+displayTwoDigits:
+	pop r24
+	pop temp
+	do_lcd_rdata temp
+	do_lcd_rdata r24
+	rjmp display_end
+
+displayOneDigit:
+	pop temp
+	do_lcd_rdata temp
+	rjmp display_end
+
+calculate_start:
+	ldi ZH, high(search_points << 1)		;load drone's location
+	ldi ZL, low(search_points << 1)
+	
+calculate:
+	lpm temp1, Z+					; x		
+	lpm temp2, Z+					; y
+	lpm r18, Z+						; z
+	rjmp drone_location				; drone location 
+
+x_square:
+	mov r24, temp1					;store location value to 3 registers
+	mov r25, temp2
+	mov r19, r18					
+	
+	cp temp1, row					; compare two x
+	brlo change_x					
+	sub temp1, row					
+	mov r22, temp1 					; store x2 - x1
+	rjmp y_square
+	
+change_x:
+	mov temp, r16				
+	sub r16, temp1					
+	mov r22, r16					; store x2 - x1
+	mov r16, temp					
+
+y_square:
+	cp temp2, col					; compare two y
+	brlo change_y				
+	sub temp2, col					
+	mov r26, temp2					; store y2 - y1
+	rjmp z_square			
+
+change_y:
+	mov temp, r17 					
+	sub r17, temp2					
+	mov r26, r17					; store y2 - y1
+	mov r17, temp					
+									
+z_square:
+	cp r19, r8						; compare two z
+	brlo change_z
+	sub r19, r8
+	mov r6, r19						; store z2 - z1
+	rjmp calculate_distance
+	
+change_z:
+	mov temp, r8					
+	sub r8, r19					
+	mov r6, r8						; store z2 - z1
+	mov r8, temp
+	
+calculate_distance:
+	mul r22, r22					; r1:r0 = x * x
+	mov r22, r1
+	cpi r22, 0						; compare r1 with 0, if r1 != 0, means the distance is 2 byte(bigger than 255)
+	brne fly						; then the drone could not search the accident, go to another searching point
+	mov temp, r0					; temp = x * x
+	mul r26, r26					; r1:r0 = y * y
+	mov r22, r1					
+	cpi r22, 0
+	brne fly 					  
+	mov temp1, r0					; y * y
+	add temp, temp1					; x * x + y * y
+	brbs 0, fly						; if bit 0 of sreg is set, that means temp + temp1 > 255, go to another searching point
+									; or temp is only one byte
+	mul r6, r6						; r1:r0 = z * z
+	mov r6, r1
+	clr temp1
+	cp r6, temp1
+	brne fly						; distance is  bigger than 255, not found, keep searching
+	mov temp1, r0
+	add temp, temp1					; x * x + y * y + z * z
+	brbs 0, fly						; if bit 0 of sreg is set, that means a carry, go to next location
+									; if the carry does not exist, means temp is one byte
+	rcall sqrt_of_distance			; call a sart function to calculate the distance
+	cpi temp, 10					; get the final distance, compare it with 10 (the drone's searching distance is 10m)
+	brlo found						; distance < 10, means the drone could see the accident position, then end the process.
+	rjmp fly						; search other points
+
+fly:
+	mov temp1, r24
+	mov temp2, r25
+	mov r18, r19
+	do_lcd_command 0b00000001 		; clear display
+	do_lcd_command 0b00000110 		; increment, no display shift
+	do_lcd_command 0b00001110 		; Cursor on, bar, no blink
+	
+	do_lcd_data 'S';
+	do_lcd_data 't';
+	do_lcd_data ':';
+	do_lcd_data ' ';
+	do_lcd_data 'f'
+	do_lcd_data 'l'
+	do_lcd_data 'y'
+	
+	ldi r19, 0xff					; motor spin at a fastest speed
+	out DDRE, r19
+	
+	clr temp 
+	sts OCR3BH,temp
+	ldi temp, 0xff 
+	sts OCR3BL, temp 
+	
+	quarterSecondDelay				; delay for 1 second
+	
+	out portc, r8
+
+	rjmp calculate
+
+found:
+	mov temp1, r24
+	mov temp2, r25
+	mov r18, r19
+
+	do_lcd_command 0b00000001 		; clear display
+	do_lcd_command 0b00000110 		; increment, no display shift
+	do_lcd_command 0b00001110 		; Cursor on, bar, no blink
+	
+	do_lcd_data 'a';
+	do_lcd_data 'c';
+	do_lcd_data 'c';
+	do_lcd_data 'i';
+	do_lcd_data ':';
+	do_lcd_data '(';
+	do_lcd_digits row;			;accident x
+	do_lcd_data ',';
+	do_lcd_digits col;			;accident y
+	do_lcd_data ',';
+	do_lcd_digits r8;			; accident z
+	do_lcd_data ')';
+	
+	do_lcd_command 0b11000000	; display on the second line
+	do_lcd_data 'l';
+	do_lcd_data 'o';
+	do_lcd_data 'c';
+	do_lcd_data ' ';
+	
+	do_lcd_data '(';
+	do_lcd_digits temp1;
+	do_lcd_data ',';
+	do_lcd_digits temp2;
+	do_lcd_data ',';
+	do_lcd_digits r18;
+	do_lcd_data ')'; 
+	
+	do_lcd_data 'F';
+	
+	ldi r19, 0xff					; motor stops
+	out DDRE, r19
+	
+	clr temp 
+	sts OCR3BH,temp
+	ldi temp, 0x00 
+	sts OCR3BL, temp 
+
+	ldi temp, (1 << CS30)  
+	sts TCCR3B, temp  
+	ldi temp, (1<< WGM30)|(1<<COM3B1)  
+	sts TCCR3A, temp
+	
+	rjmp end
+
+drone_location:
+	do_lcd_command 0b00000001 		; clear display
+	do_lcd_command 0b00000110 		; increment, no display shift
+	do_lcd_command 0b00001110 		; Cursor on, bar, no blink
+	
+	do_lcd_data 's';
+	do_lcd_data 't';
+	do_lcd_data 'a';
+	do_lcd_data ':';
+	do_lcd_data ' ';
+	do_lcd_data 's'	
+	do_lcd_data 'e'
+	do_lcd_data 'a'
+	do_lcd_data 'r'
+	do_lcd_data 'c'
+	do_lcd_data 'h'
+
+	do_lcd_command 0b11000000	; display on the second line
+	do_lcd_data 'l';
+	do_lcd_data 'o';
+	do_lcd_data 'c';
+	do_lcd_data ' ';
+	
+	do_lcd_data '(';
+	do_lcd_digits temp1;
+	do_lcd_data ',';
+	do_lcd_digits temp2;
+	do_lcd_data ',';
+	do_lcd_digits r18;
+	do_lcd_data ')';
+	
+	out portc,r8
+	
+	ldi r19, 0xff					; motor spin at a fastest speed
+	out DDRE, r19
+	
+	clr temp 
+	sts OCR3BH,temp
+	ldi temp, 0xff 
+	sts OCR3BL, temp 
+
+	ldi temp, (1 << CS30)  
+	sts TCCR3B, temp  
+	ldi temp, (1<< WGM30)|(1<<COM3B1)  
+	sts TCCR3A, temp
+	
+	quarterSecondDelay 				; delay for 1s
+	quarterSecondDelay
+	quarterSecondDelay
+	quarterSecondDelay
+
+	rjmp x_square
+	
+sqrt_of_distance:			; calculates the sqrt by subtracting an ODD number that self increases by 2 for each iteration
+	push r6
+	clr sqrt
+	clr r6		
+	inc r6					; initialize the seed(seed = 1) to be subtracted(as the distance must be 1 byte, then seed is noly 1 byte)
+loop:
+	cp temp, r6				; if temp less than the seed, end the loop and get the result
+	brlo exit
+	sub temp, r6
+	inc sqrt				; sqrt is the loop times(the final result)
+	inc r6					; increase seed by 2
+	inc r6
+	rjmp loop
+exit:
+	mov temp, sqrt			; store the sqrt of temp back to temp
+	pop r6
+ret
